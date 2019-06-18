@@ -15,7 +15,7 @@ static char   *websDocuments;               /* Default Web page directory */
 
 /**************************** Forward Declarations ****************************/
 
-static void fileWriteEvent(Webs *wp);
+ void fileWriteEvent(Webs *wp);
 
 /*********************************** Code *************************************/
 /*
@@ -108,7 +108,7 @@ static bool fileHandler(Webs *wp)
     Do output back to the browser in the background. This is a socket write handler.
     This bypasses the output buffer and writes directly to the socket.
  */
-static void fileWriteEvent(Webs *wp)
+ void fileWriteEvent(Webs *wp)
 {
     char    *buf;
     ssize   len, wrote;

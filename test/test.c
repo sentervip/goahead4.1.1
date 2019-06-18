@@ -64,7 +64,8 @@ static int legacyTest(Webs *wp, char *prefix, char *dir, int flags);
 static void sigHandler(int signo);
 #endif
 static void exitProc(void *data, int id);
-
+static void actionDownLoad(Webs *wp, char *path, char *query);
+extern  void fileWriteEvent(Webs *wp);
 /*********************************** Code *************************************/
 
 MAIN(goahead, int argcc, char **argvv, char **envp)
@@ -80,8 +81,8 @@ MAIN(goahead, int argcc, char **argvv, char **envp)
     char arg0[] = "webs";
     char arg1[] = "--home";
     char arg2[] ="/etc/goahead";
-    char arg3[] ="/opt/svm/www";
-    char arg4[] ="80";
+    char arg3[] ="/work/prj/goahead4.1.1/test/web";
+    char arg4[] ="8080";
     
     char *argv[] ={ arg0 , arg1,arg2,arg3,arg4 } ;
     for (argind = 1; argind < argc; argind++) {
@@ -187,6 +188,7 @@ MAIN(goahead, int argcc, char **argvv, char **envp)
 #if ME_GOAHEAD_UPLOAD && !ME_ROM
     websDefineAction("uploadTest", uploadTest);
 #endif
+	websDefineAction("down", actionDownLoad);
 
 #if ME_UNIX_LIKE && !MACOSX
     /*
@@ -437,22 +439,123 @@ static int legacyTest(Webs *wp, char *prefix, char *dir, int flags)
 
 #endif
 
-/*
-    @copy   default
+static void avolfileClose(){
+	//wfree(websIndex);
+	//websIndex = NULL;
+	//wfree(websDocuments);
+	//websDocuments = NULL;
+}
+char * getUrlLastSplit(char * str, char c)
+{
+    unsigned char i=0,offset;
+    while(*(str+i) != NULL){
+        if(*(str+i) ==  c){
+            offset = i;
+        }
+        i++;
+	}
+	return (str+offset+1);
+}
+static int avolfileHandler(Webs *wp){
+	WebsFileInfo    info;
+	char *tmp, *date;
+	ssize nchars;
+	int code;
 
-    Copyright (c) Embedthis Software LLC, 2003-2014. All Rights Reserved.
+	char* pathfilename; 
+	char* filenameExt; 
+	char* filename; 
+	char* disposition; 
+	
+	assert(websValid(wp));
+	assert(wp->method);
+	assert(wp->filename && wp->filename[0]);
 
-    This software is distributed under commercial and open source licenses.
-    You may use the Embedthis GoAhead open source license or you may acquire
-    a commercial license from Embedthis Software. You agree to be fully bound
-    by the terms of either license. Consult the LICENSE.md distributed with
-    this software for full details and other copyrights.
+	// http://127.0.0.1:8080/action/down?name=/opt/svm/www/upload/run.sh
+	pathfilename = websGetVar(wp, "name", NULL);
+	if (pathfilename==NULL)
+		return 1;
 
-    Local variables:
-    tab-width: 4
-    c-basic-offset: 4
-    End:
-    vim: sw=4 ts=4 expandtab
+	//取文件名和扩展名
+	filename =sclone(getUrlLastSplit(sclone(pathfilename),'/'));
+	filenameExt =sclone(getUrlLastSplit(sclone(filename),'.'));
+	
+	if (wp->ext) wfree(wp->ext);
+	
+	wp->ext=(char*)walloc(1+strlen(filenameExt)+1);
+	sprintf(wp->ext,".%s",sclone(filenameExt));
+	free(filenameExt);
+	filenameExt=NULL;
 
-    @end
- */
+	if (wp->filename) {
+		wfree(wp->filename);
+	}
+	wp->filename=sclone(pathfilename);
+
+	if (wp->path) {
+		wfree(wp->path);
+	}
+	wp->path=sclone(pathfilename);
+    
+	//If the file is a directory, redirect using the nominated default page
+	if (websPageIsDirectory(wp)) {
+		nchars = strlen(wp->path);
+		if (wp->path[nchars - 1] == '/' || wp->path[nchars - 1] == '\\') {
+			wp->path[--nchars] = '\0';
+		}
+	    char* websIndex = "testdownload";
+		tmp = sfmt("%s/%s", wp->path, websIndex);
+		websRedirect(wp, tmp);
+		wfree(tmp);
+		return 1;
+	}
+	if (websPageOpen(wp, O_RDONLY | O_BINARY, 0666) < 0) {
+		websError(wp, HTTP_CODE_NOT_FOUND, "Cannot open document for: %s", wp->path);
+		return 1;
+	}
+	if (websPageStat(wp, &info) < 0) {
+		websError(wp, HTTP_CODE_NOT_FOUND, "Cannot stat page for URL");
+		return 1;
+	}
+	code = 200;
+	if (wp->since && info.mtime <= wp->since) {
+		code = 304;
+	}
+	websSetStatus(wp, code);
+	websWriteHeaders(wp, info.size, 0);
+
+	//浏览器下载文件时的文件名 
+	disposition = (char*)walloc(20+strlen(filename)+1);
+	sprintf(disposition,"attachment;filename=%s",sclone(filename));
+	websWriteHeader(wp, "Content-Disposition", sclone(disposition));
+	free(filename);
+	free(disposition);
+	filename=NULL;
+	disposition=NULL;
+
+	if ((date = websGetDateString(&info)) != NULL) {
+		websWriteHeader(wp, "Last-modified", "%s", date);
+		wfree(date);
+	}
+	websWriteEndHeaders(wp);
+
+	//All done if the browser did a HEAD request
+	if (smatch(wp->method, "HEAD")) {
+		websDone(wp);
+		return 1;
+	}
+	websSetBackgroundWriter(wp, fileWriteEvent);
+	return 1;
+}
+static void actionDownLoad(Webs *wp, char *path, char *query){
+	//(*wp).route->handler->close = (*avolfileClose);
+	//(*wp).route->handler->service = (*avolfileHandler);
+	//(*wp).route->handler->service(wp);
+	
+	WebsHandlerProc service = (*wp).route->handler->service; 
+	(*wp).route->handler->close = (*avolfileClose);
+	(*wp).route->handler->service =(*avolfileHandler); 
+	(*wp).route->handler->service(wp); 
+	(*wp).route->handler->service= service; 
+}
+
